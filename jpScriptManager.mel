@@ -1,0 +1,343 @@
+//James Parks
+
+global string $jpSMVerNum = "1.2";
+
+
+global proc jpScriptManager()
+{
+global string $jpSMVerNum;
+string $wc[] = {"*.mel", "*.py"};
+
+
+//Look for a scripty path
+string $jpSMpath = `optionVar -q "jpSMpath"`;
+string $noPath;
+if($jpSMpath == 0)
+{
+	$noPath = `confirmDialog -t "Set A Script Path"
+		-ma "center" 
+		-m "You Must Set A Script Path"
+		-b "OK"`;
+}//end if
+if($noPath == "OK")
+{
+	jpSMsetPathDialog();
+	$jpSMpath = `optionVar -q "jpSMpath"`;
+}
+//string $jpSMscriptPath = "\\\\Nitro\\vol1\\dev\\mayascripts";
+
+///////////////////////
+//Prep for Python sys.path.append and imports
+///////////////////////
+python( "myPath = cmds.optionVar( q=\"jpSMpath\")" );
+python( "import sys" );
+python( "sys.path.append( myPath )");
+
+
+///////////////////////
+//Make the window and call the controls
+///////////////////////
+string $scriptsDir = `internalVar -usd`;
+string $autoLoad = ($scriptsDir + "autoLoad.mel");
+$autoLoad = fromNativePath($autoLoad);
+
+
+string $winName = "jpScriptManager";
+if (`window -exists $winName`) 
+{
+	showWindow $winName; //deleteUI $winName;
+}//end if
+else
+{
+	window -t ("Script Manager v" + $jpSMVerNum + "  --  James Parks") -wh 380 275 -rtf 0 -menuBar 1 $winName;
+	menu -l "File" jpSMfileMenu;
+		menuItem -l "Set Path..." -p jpSMfileMenu -c "jpSMsetPathDialog()" jpSMsetPathMenuItem;
+		menuItem -l "Print Path" -p jpSMfileMenu -c ("print \"" + $jpSMpath + "\"") jpSMprintPathMenuItem;
+		menuItem -d 1 -p jpSMfileMenu jpSMdivider_1; 
+		menuItem -l "Edit AutoLoad" -en 0 -p jpSMfileMenu -c ("jpSMedit(\"" + $autoLoad + "\")") jpSMeditAutoLoadMenuItem;
+		menuItem -l "Clear AutoLoad" -en 0 -p jpSMfileMenu -c ("sysFile -del \"" + $autoLoad + "\"") jpSMclearAutoLoadMenuItem;
+		menuItem -d 1 -p jpSMfileMenu jpSMdivider_2;
+		menuItem -l "Refresh" -p jpSMfileMenu -c "jpScriptManager()" jpSMrefreshMenuItem;
+
+
+	string $jpSMscrollLayout = `scrollLayout -hst 0 jpSMscrollLayout`;
+		string $jpSMmainColumn = `columnLayout -w 500 -p jpSMscrollLayout jpSMmainColumn`;
+
+
+	string $subDirs[] = `jpSMgetSubDirs($jpSMpath)`;
+	$subDirs = `sort($subDirs)`;
+	string $melFiles[] = `getFileList -fld $jpSMpath -fs $wc[0]`;
+	string $pyFiles[] = `getFileList -fld $jpSMpath -fs $wc[1]`;
+	string $scriptFiles[] = stringArrayCatenate($melFiles, $pyFiles);
+	$scriptFiles = `sort($scriptFiles)`;
+
+
+
+	jpSMsubDirCalls($jpSMpath, $subDirs, $jpSMmainColumn);
+
+	if(`size($melFiles)` > 0)
+	{
+		frameLayout 
+			-label "ROOT SCRIPT FOLDER"
+			-borderStyle "in"
+			-cll 1
+			-cl 1
+			-li 10
+			-la "center"
+			-mw 0
+			-mh 0
+			-w 350
+			-p $jpSMmainColumn
+			root_frameLayout
+			;
+		string $rootColLayout = `columnLayout -w 350 -p "root_frameLayout"`;
+
+
+		jpSMcallControls($jpSMpath, $rootColLayout, 1);
+	}//end if
+	//jpSMcallControls($jpSMpath, $jpSMmainColumn);
+
+
+
+	showWindow $winName;
+}//end else
+}//end proc jpScriptManager
+
+
+
+
+
+
+
+global proc jpSMsetPathDialog()
+{
+	global string $jpSMpath;
+	fileBrowserDialog -m 4 -fc "jpSMsetPath" -an "Set Script Path";
+}//end proc jpSMsetPathDialog
+
+global proc jpSMsetPath(string $fileName, string $fileType)
+{
+	global string $jpSMpath;
+	$jpSMpath = ($fileName + "\/");
+	optionVar -sv "jpSMpath" $jpSMpath;
+	jpScriptManager;
+}//end proc jpSMsetPath
+
+
+
+
+
+global proc string[] jpSMgetSubDirs(string $path)
+{
+string $subDirectories[] = `getFileList -folder $path`;
+int $i = 0;
+string $subDirs[];
+	for($dir in $subDirectories)
+	{
+		if(`filetest -d ($path + $dir)`)
+		{
+			$subDirs[$i] = $dir;
+			$i++;
+		}//end if
+	}//end for
+	
+	//Add all subdirectory to python's sys.path
+	for($pythonDir in $subDirs)
+	{
+		//add this directory into python's sys.path
+		jpSMaddToSysPath($path + $pythonDir);
+	}
+return $subDirs;
+}//end proc jpSMgetSubDirs
+
+
+
+
+global proc jpSMsubDirCalls(string $path, string $subDirs[], string $parent)
+{
+string $wc[] = {"*.mel", "*.py"};
+
+	//File Heirarchy Search
+	for($dir in $subDirs)
+	{
+		string $newSubDirs[] = `getFileList -folder ($path + $dir + "\/")`;
+		$newSubDirs = `sort($newSubDirs)`;
+		string $newMelFiles[] = `getFileList -fld ($path + $dir + "\/") -fs $wc[0]`;
+		string $newPyFiles[] = `getFileList -fld ($path + $dir + "\/") -fs $wc[1]`;
+		string $newScriptFiles[] = stringArrayCatenate($newMelFiles, $newPyFiles);
+		$newScriptFiles = `sort($newScriptFiles)`;
+		
+		//print $newScriptFiles;
+		
+		if(`size($newScriptFiles)` > 0)
+		{
+			$subDirFrame = `frameLayout 
+				-label $dir
+				-borderStyle "in"
+				-cll 1
+				-cl 1
+				-li 10
+				-la "center"
+				-mw 0
+				-mh 0
+				//-w 300
+				-p $parent
+				($dir + "_frameLayout")`
+				;
+			string $tempColLayout = `columnLayout -w 350 -p $subDirFrame`;
+
+			string $subPath = ($path + $dir + "\/");
+			if(`size($newSubDirs)` > 0)
+			{
+				jpSMsubDirCalls($subPath, $newSubDirs, $tempColLayout);
+			}
+			jpSMcallControls($subPath, $tempColLayout, 1);
+		}//end if
+	}//end for
+}//end proc jpSMsubDirCalls
+
+
+
+
+global proc jpSMcallControls(string $path, string $parent, int $isSubDir)
+{
+//Check the computer name
+string $initDir = `pwd`;
+chdir("C:\/");
+string $compName = `system("hostname")`;
+$compName = `strip($compName)`;
+chdir($initDir);
+
+
+
+string $wc[] = {"*.mel", "*.py"};
+//Maya call method
+string $melFiles[] = `getFileList -fld $path -fs $wc[0]`;
+$melFiles = `sort($melFiles)`;
+
+//Python files
+python( "myPath = cmds.optionVar( q=\"jpSMpath\")" );
+string $pyFiles[] = `getFileList -fld $path -fs $wc[1]`;
+python( "pyFiles = cmds.getFileList( fld=myPath, fs=\"*.py\")" );
+$pyFiles = `sort($pyFiles)`;
+string $scriptFiles[] = stringArrayCatenate($melFiles, $pyFiles);
+$scriptFiles = `sort($scriptFiles)`;
+
+string $command;
+string $autoCommand;
+	if($isSubDir)
+	{
+		//add this directory into python's sys.path
+		jpSMaddToSysPath($path);
+
+		for($file in $scriptFiles)
+		{
+			$command = ($command + "source \"" + $path + $file + "\";");
+			$command = ($command + "print \"" + $path + $file + "\";");
+			//$autoCommand = ("print \"This is a test\";");
+		}//end for
+		button -l "Source All" -w 345 -p $parent -c $command;
+		button -l "Auto All" -w 345 -p $parent -c ("print \"autoCommand\"");
+	}//end if
+
+	for($file in $melFiles)
+	{
+		if($compName == "canaryws6" || $compName == "hpdual05" || $compName == "ZW-CALA-DTS3155")
+		{
+			rowLayout -nc 4 -cw 1 195 -cw 2 50 -cw 3 50 -cw 4 50 -p $parent -h 25;
+		//	rowColumnLayout -p jpSMmainColumn -nr 1 -rh 1 25;
+				text -l $file -w 200;
+				button -l "Edit" -w 50 -c ("jpSMedit(\"" + $path + $file + "\")");
+				button -l "Auto" -w 50 -c ("jpSMaddToAutoLoad(\"" + $path + $file + "\")");
+				button -l "Source" -w 50 -c ("source \"" + $path + $file + "\"; print \"" + $path + $file + "\";");
+			setParent ..;
+		}//end if
+		else
+		{
+			rowLayout -nc 3 -cw 1 245 -cw 2 50 -cw 3 50 -p $parent -h 25;
+		//	rowColumnLayout -p jpSMmainColumn -nr 1 -rh 1 25;
+				text -l $file -w 250;
+				button -l "Auto" -w 50 -c ("jpSMaddToAutoLoad(\"" + $path + $file + "\")");
+				button -l "Source" -w 50 -c ("source \"" + $path + $file + "\"; print \"" + $path + $file + "\";");
+			setParent ..;
+		}//end else
+	}//end for
+	for($file in $pyFiles)
+	{
+		string $extTok[];
+		tokenize $file "." $extTok;
+		string $mod = $extTok[0]; 
+		print $mod;
+		if($compName == "canaryws6" || $compName == "ZW-CALA-DTS3155" )
+		{
+			rowLayout -nc 4 -cw 1 195 -cw 2 50 -cw 3 50 -cw 4 50 -p $parent -h 25;
+		//	rowColumnLayout -p jpSMmainColumn -nr 1 -rh 1 25;
+				text -l $file -w 200;
+				button -l "Edit" -w 50 -c ("jpSMedit(\"" + $path + $file + "\")");
+				//button -l "Auto" -w 50 -c ("jpSMaddToAutoLoad(\"" + $path + $file + "\")");
+				button -l "Print" -w 50 -c ( print ($path + $file ));
+				$fCommand = ("python(\"from " + $mod + " import *\")");
+				//button -l "Source" -w 50 -c ("eval($fCommand);print $fCommand");
+				button -l "Source" -w 50 -c ("python(\"from " + $mod + " import *\")");
+			setParent ..;
+		}//end if
+		else
+		{
+			rowLayout -nc 3 -cw 1 245 -cw 2 50 -cw 3 50 -p $parent -h 25;
+		//	rowColumnLayout -p jpSMmainColumn -nr 1 -rh 1 25;
+				text -l $file -w 250;
+				//button -l "Auto" -w 50 -c ("jpSMaddToAutoLoad(\"" + $path + $file + "\")");
+				$fCommand = ("python(\"from " + $mod + " import *\")");
+				//button -l "Source" -w 50 -c ("eval($fCommand);print $fCommand");
+				button -l "Source" -w 50 -c ("python(\"from " + $mod + " import *\")");
+			setParent ..;
+		}//end else
+	}//end for
+}//end proc jpSMcallControls
+
+
+
+global proc jpSMedit(string $name)
+{
+	string $initDir = `pwd`;
+	chdir("C:\/");
+	system("Shell " + $name);
+	chdir($initDir);
+}//end proc jpSMedit
+
+
+
+global proc jpSMaddToAutoLoad(string $name)
+{
+	string $scriptsDir = `internalVar -usd`;
+	//string $scriptsDir = "\/\/Nitro\/vol1\/dev\/";
+	string $autoLoad = ($scriptsDir + "autoLoad.mel");
+	$autoLoad = toNativePath($autoLoad);
+
+	$name = fromNativePath($name);
+	string $command = ("source \"" + $name + "\";\n");
+	//evalEcho("source \"" + $jpScriptPath + "jpShaderMaker\/jpShaderMaker.mel\"");
+	
+	if(`filetest -r $autoLoad`)
+	{
+		int $fileID = `fopen $autoLoad "a"`;
+		fprint $fileID $command;
+		fclose $fileID;
+	}//end if
+	else
+	{
+		int $fileID = `fopen $autoLoad "w+"`;
+		fprint $fileID $command;
+		fclose $fileID;
+	}//end else
+
+}//end proc jpSMaddToAutoLoad
+
+global proc jpSMaddToSysPath(string $path)
+{
+	//Add all subdirectory to python's sys.path
+		string $pathCommand = ("python( \"newPath = \\\"" + $path  + "\\\"\")");
+		eval($pathCommand);
+		python( "if newPath not in sys.path: sys.path.append(newPath)");
+}//end proc jpSMaddToSysPath
+
